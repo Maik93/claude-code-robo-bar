@@ -90,11 +90,28 @@ async function maybePing($: EngineInterface) {
   }
 }
 
+/**
+ * Mirrors the bar to the status line under the prompt, which stays on screen where the app hides the band above it
+ * (under its follow-up box). Cleared while a turn runs.
+ */
+async function showStatus($: EngineInterface) {
+  const row = await readRow($)
+  if (row.at === 0 || row.isBusy) {
+    $.ui.status(undefined)
+    return
+  }
+  const left = TTL_MS - ((await $.clock.now()) - row.at)
+  const cache = left > 0 ? `hot · ${shortTime(left)} left` : 'cold'
+  const summary = await read($, tldr)
+  $.ui.status(summary ? `${cache} · ${summary}` : cache)
+}
+
 /** Sums up `answer` in one line and shows it; a failed call leaves the line empty. */
 async function summarize($: EngineInterface, answer: string) {
   const text = answer.trim()
   if (text.length <= TLDR_PLAIN_MAX && !text.includes('\n')) {
     await update($, tldr, () => text)
+    await showStatus($)
     return
   }
   const r = await $.model.complete({
@@ -107,6 +124,7 @@ async function summarize($: EngineInterface, answer: string) {
   })
   const line = r.isAnswered ? r.text.trim().split('\n')[0] : ''
   if (line) await update($, tldr, () => line)
+  await showStatus($)
 }
 
 export const register: Register = on => {
@@ -126,6 +144,7 @@ export const register: Register = on => {
     $.clock.every(TICK_MS, () => {
       void update($, tick, n => n + 1)
       void maybePing($)
+      void showStatus($)
     })
 
     return next(e)
@@ -154,6 +173,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       await save($, { isBusy: true, at: await $.clock.now() })
       await update($, tldr, () => null)
+      await showStatus($)
     }
     return next(e)
   })
@@ -165,6 +185,7 @@ export const register: Register = on => {
       // A turn that reached the model refreshed the cache; an interrupt or error before any request did not.
       if (e.usage) patch.at = await $.clock.now()
       await save($, patch)
+      await showStatus($)
       // Not awaited: the summary arrives a moment after the answer, without holding up the turn's end.
       if (e.reason === 'answer' && e.answer.trim()) void summarize($, e.answer).catch(() => undefined)
     }
