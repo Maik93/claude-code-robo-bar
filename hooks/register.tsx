@@ -17,16 +17,27 @@ const TTL_MS = 60 * 60_000
 const KEEP_MS = 24 * 60 * 60_000
 const TICK_MS = 15_000
 
-// The hidden ping, off until /keep-warm turns it on for a session: this long before the cache expires, resend the chat's last request with a tiny question. The
-// request reads the cached chat, which restarts the cache's clock; the reply is thrown away.
+// The hidden ping, off until /keep-warm turns it on for a session: this long before the cache expires, resend the
+// chat's last request with a tiny question. The request reads the cached chat, which restarts the cache's clock; the
+// reply is thrown away.
 const PING_AT_MS = 2 * 60_000
 const MAX_PINGS = 3
 // Where a prompt from the person comes from: the prompt box, a remote client, the app.
 const PERSON: readonly string[] = ['composer', 'bridge', 'sdk']
 const PING_PROMPT = 'Keep-alive ping, not from the user. Reply with just "ok".'
 
+// The TLDR line: after each answer, a small model sums it up in one line. It reads only the answer, not the chat, so
+// it costs a fraction of a cent. An answer this short is shown as it is, with no model call.
+const TLDR_MODEL = 'haiku'
+const TLDR_PLAIN_MAX = 100
+const TLDR_SYSTEM =
+  'You write a one-line TLDR of an AI coding assistant\'s reply, for a status bar. At most 12 words, no ' +
+  'preamble, no quotes, no trailing period. Say what was done or found, not that a reply was given.'
+
 // Bumped on a timer and on every write, so the band redraws and its countdown moves.
-const tick = atom({ plugin: 'cache-heat', key: 'tick' } as const, 0)
+const tick = atom({ plugin: 'robo-bar', key: 'tick' } as const, 0)
+// The last answer's TLDR, or null while none is ready.
+const tldr = atom({ plugin: 'robo-bar', key: 'tldr' } as const, null as string | null)
 
 const rowKey = (id: string) => `s:${id}`
 const shortTime = (ms: number) => {
@@ -79,6 +90,25 @@ async function maybePing($: EngineInterface) {
   }
 }
 
+/** Sums up `answer` in one line and shows it; a failed call leaves the line empty. */
+async function summarize($: EngineInterface, answer: string) {
+  const text = answer.trim()
+  if (text.length <= TLDR_PLAIN_MAX && !text.includes('\n')) {
+    await update($, tldr, () => text)
+    return
+  }
+  const r = await $.model.complete({
+    model: TLDR_MODEL,
+    system: TLDR_SYSTEM,
+    prompt: text,
+    effort: 'low',
+    maxTokens: 1024,
+    timeoutMs: 30_000,
+  })
+  const line = r.isAnswered ? r.text.trim().split('\n')[0] : ''
+  if (line) await update($, tldr, () => line)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -86,10 +116,6 @@ export const register: Register = on => {
       description: 'Keep this session\'s prompt cache warm with a hidden ping before it expires',
       argumentHint: 'on | off',
     })
-    // Close the pane an earlier version of this mod opened.
-    void $.ui.close({ id: 'cache-heat' })
-    // A setting from an earlier version, when the lifetime could be changed.
-    await $.store.delete('ttl')
     // Drop rows of sessions idle for over a day.
     const now = await $.clock.now()
     for (const key of await $.store.keys()) {
@@ -125,7 +151,10 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) await save($, { isBusy: true, at: await $.clock.now() })
+    if (e.agentId === undefined) {
+      await save($, { isBusy: true, at: await $.clock.now() })
+      await update($, tldr, () => null)
+    }
     return next(e)
   })
 
@@ -136,6 +165,8 @@ export const register: Register = on => {
       // A turn that reached the model refreshed the cache; an interrupt or error before any request did not.
       if (e.usage) patch.at = await $.clock.now()
       await save($, patch)
+      // Not awaited: the summary arrives a moment after the answer, without holding up the turn's end.
+      if (e.reason === 'answer' && e.answer.trim()) void summarize($, e.answer).catch(() => undefined)
     }
     return done
   })
@@ -145,7 +176,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // One right-aligned badge above the prompt with this session's cache state.
+  // One line above the prompt: the last answer's TLDR on the left, the cache badge on the right.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     await read($, tick)
     const row = await readRow($)
@@ -158,11 +189,23 @@ export const register: Register = on => {
     const left = TTL_MS - ((await $.clock.now()) - row.at)
     const mode: Mode = left > 0 ? 'hot' : 'cold'
     const word = mode === 'hot' ? `${shortTime(left)} left` : 'COLD'
+    const summary = await read($, tldr)
+
+    const tldrText = (
+      <Box key="tldr" flexGrow={1} flexShrink={1} marginRight={2}>
+        {summary ? (
+          <Text dimColor wrap="truncate-end">
+            {summary}
+          </Text>
+        ) : null}
+      </Box>
+    )
 
     if (!Svg) {
       return (
-        <Box justifyContent="flex-end">
-          <Text backgroundColor={HUE[mode]} color={INK} bold>{` ${word} `}</Text>
+        <Box flexDirection="row">
+          {tldrText}
+          <Text key="chip" backgroundColor={HUE[mode]} color={INK} bold>{` ${word} `}</Text>
         </Box>
       )
     }
@@ -170,10 +213,13 @@ export const register: Register = on => {
     const chip = chipSvg(word, mode)
     const alt = mode === 'hot' ? 'Robo, bobbing' : 'Robo, frozen'
     return (
-      <Box justifyContent="flex-end" alignItems="center">
-        <Svg key="robo" source={roboSvg(mode)} alt={alt} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />
-        <Text> </Text>
-        <Svg key="chip" source={chip.source} alt={word} width={chip.w} height={chip.h} />
+      <Box flexDirection="row" alignItems="center">
+        {tldrText}
+        <Box key="badge" flexShrink={0} alignItems="center">
+          <Svg key="robo" source={roboSvg(mode)} alt={alt} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />
+          <Text> </Text>
+          <Svg key="chip" source={chip.source} alt={word} width={chip.w} height={chip.h} />
+        </Box>
       </Box>
     )
   })

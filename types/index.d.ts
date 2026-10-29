@@ -3,6 +3,6 @@ export type Tick = number
 
 declare module 'claude-code' {
   interface PluginState {
-    'cache-heat': { tick: Tick }
+    'robo-bar': { tick: Tick; tldr: string | null }
   }
 }
