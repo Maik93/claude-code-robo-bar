@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ttl } from '../types'
+import { HUE, INK, ROBO_SIZE, chipSvg, roboSvg } from './badge'
+import type { Mode } from './badge'
 
 // This session's cache state, kept in the mod's store so it survives restarts and resumes.
 type Row = {
@@ -91,13 +93,30 @@ export const register: Register = on => {
     const row = (await $.store.get(rowKey(await $.session.id()))) as Row | undefined
     if (e.props.hasSurvey || !row || row.at === 0 || row.isBusy) return next(e)
 
-    const { Box, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    // Svg draws on desktop, mobile and VS Code; the terminal gets a plain colored chip.
+    const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : null
     const ttl = ((await $.store.get('ttl')) as Ttl | undefined) ?? '1h'
     const left = TTL_MS[ttl] - ((await $.clock.now()) - row.at)
+    const mode: Mode = left > 0 ? 'hot' : 'cold'
+    const word = mode === 'hot' ? `${shortTime(left)} left` : 'COLD'
 
+    if (!Svg) {
+      return (
+        <Box justifyContent="flex-end">
+          <Text backgroundColor={HUE[mode]} color={INK} bold>{` ${word} `}</Text>
+        </Box>
+      )
+    }
+
+    const chip = chipSvg(word, mode)
+    const alt = mode === 'hot' ? 'Robo, bobbing' : 'Robo, frozen'
     return (
-      <Box justifyContent="flex-end">
-        <Text dimColor>{left > 0 ? `hot · ${shortTime(left)} left` : 'cold'}</Text>
+      <Box justifyContent="flex-end" alignItems="center">
+        <Svg key="robo" source={roboSvg(mode)} alt={alt} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />
+        <Text> </Text>
+        <Svg key="chip" source={chip.source} alt={word} width={chip.w} height={chip.h} />
       </Box>
     )
   })
