@@ -148,7 +148,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (PERSON.includes(e.origin.kind)) await save($, { pings: 0 })
     return next(e)
-  })
+  }).catch(($, e, next) => next(e)) // a failed reset never holds up the person's message
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
