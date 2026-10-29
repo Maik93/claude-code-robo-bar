@@ -1,7 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Ttl } from '../types'
 import { HUE, INK, ROBO_SIZE, chipSvg, roboSvg } from './badge'
 import type { Mode } from './badge'
 
@@ -13,7 +12,8 @@ type Row = {
   keepWarm: boolean // the person turned the hidden ping on with /keep-warm
 }
 
-const TTL_MS: Record<Ttl, number> = { '5m': 5 * 60_000, '1h': 60 * 60_000 }
+// Claude Code's prompt cache lives an hour after the last request that read or wrote it.
+const TTL_MS = 60 * 60_000
 const KEEP_MS = 24 * 60 * 60_000
 const TICK_MS = 15_000
 
@@ -48,10 +48,6 @@ async function save($: EngineInterface, patch: Partial<Row>) {
   await update($, tick, n => n + 1)
 }
 
-async function readTtl($: EngineInterface): Promise<Ttl> {
-  return ((await $.store.get('ttl')) as Ttl | undefined) ?? '1h'
-}
-
 let isPinging = false
 
 /** Sends a hidden ping when keep-warm is on, the cache is about to expire, the session is idle and pings are left. */
@@ -59,7 +55,7 @@ async function maybePing($: EngineInterface) {
   if (isPinging) return
   const row = await readRow($)
   if (!row.keepWarm || row.at === 0 || row.isBusy || row.pings >= MAX_PINGS) return
-  const left = TTL_MS[await readTtl($)] - ((await $.clock.now()) - row.at)
+  const left = TTL_MS - ((await $.clock.now()) - row.at)
   if (left <= 0 || left > PING_AT_MS) return
 
   isPinging = true
@@ -86,17 +82,14 @@ async function maybePing($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'cache-ttl',
-      description: 'Set the prompt cache lifetime the band counts down from',
-      argumentHint: '5m | 1h',
-    })
-    await $.command.register({
       name: 'keep-warm',
       description: 'Keep this session\'s prompt cache warm with a hidden ping before it expires',
       argumentHint: 'on | off',
     })
     // Close the pane an earlier version of this mod opened.
     void $.ui.close({ id: 'cache-heat' })
+    // A setting from an earlier version, when the lifetime could be changed.
+    await $.store.delete('ttl')
     // Drop rows of sessions idle for over a day.
     const now = await $.clock.now()
     for (const key of await $.store.keys()) {
@@ -110,16 +103,6 @@ export const register: Register = on => {
     })
 
     return next(e)
-  })
-
-  on('command.run', { command: 'cache-ttl' }, async ($, e) => {
-    const want = e.args.trim()
-    if (want !== '5m' && want !== '1h') {
-      return { text: `Cache lifetime is ${await readTtl($)}. Use /cache-ttl 5m or /cache-ttl 1h.` }
-    }
-    await $.store.set('ttl', want)
-    await update($, tick, n => n + 1)
-    return { text: `Cache lifetime set to ${want}.` }
   })
 
   // With no argument, flips the setting.
@@ -172,7 +155,7 @@ export const register: Register = on => {
     const { Box, Text } = ui
     // Svg draws on desktop, mobile and VS Code; the terminal gets a plain colored chip.
     const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : null
-    const left = TTL_MS[await readTtl($)] - ((await $.clock.now()) - row.at)
+    const left = TTL_MS - ((await $.clock.now()) - row.at)
     const mode: Mode = left > 0 ? 'hot' : 'cold'
     const word = mode === 'hot' ? `${shortTime(left)} left` : 'COLD'
 
