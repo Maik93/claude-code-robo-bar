@@ -1,0 +1,1 @@
+{ "name": "cache-heat", "version": "0.1.0", "description": "Band above the prompt showing whether this session's prompt cache is hot or cold", "types": "./types/index.d.ts" }
