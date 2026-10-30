@@ -7,9 +7,9 @@ A Claude Code mod that adds a bar above the prompt. On the left, a one-line summ
 ## The bar
 
 - **Summary (left):** a dim one-line summary of the last answer.
-  - Answers that already fit on one line (up to 90 characters) are shown as they are, with no model call.
+  - Answers that already fit on one line (up to 95 characters) are shown as they are, with no model call.
   - Longer answers are summarized by Haiku at low effort, which costs a fraction of a cent. The summary appears a moment after the answer.
-  - The summary is cut at a word break with "…", so it never pushes the badge off the bar. On desktop it can use up to 90 characters; in the terminal, one character per column.
+  - The summary is cut at a word break with "…", so it never pushes the badge off the bar. On desktop it can use up to 95 characters; in the terminal, one character per column.
 - **Badge (right):**
   - **Hot:** the robot bobs and a red chip counts down, e.g. "58m left". Claude Code's prompt cache lives 1 hour after the last request that read or wrote it.
   - **Cold:** the robot is frozen in ice and a blue chip reads "COLD".
