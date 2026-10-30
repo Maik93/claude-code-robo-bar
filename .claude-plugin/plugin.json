@@ -1,6 +1,6 @@
 {
   "name": "robo-bar",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "A bar above the prompt with a one-line summary of the last answer and the prompt cache's hot/cold state",
   "author": {
     "name": "Michael Mugnai"
