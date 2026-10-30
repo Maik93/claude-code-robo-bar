@@ -27,6 +27,10 @@ Keeps the session's prompt cache warm while you're away. It's off by default and
 
 Each ping is a full request over the cached chat, billed at the cache-read rate.
 
+## `/robo-bar-ruler`
+
+Toggles a measuring ruler in the bar, for this session. The bar shows what the surface reports (`bodyColumns`, viewport width, and the room robo-bar computes for the summary), then rows of text 40 to 120 characters long, each beside the badge and ending in `|`. The longest row whose `|` still shows is how much text fits on that surface.
+
 ## State
 
 Each session's last cache time and keep-warm setting are saved, so they survive restarts and resumes. Entries for sessions idle more than a day are cleared.

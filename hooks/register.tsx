@@ -47,6 +47,15 @@ const TLDR_SYSTEM =
 const tick = atom({ plugin: 'robo-bar', key: 'tick' } as const, 0)
 // The last answer's TLDR, or null while none is ready.
 const tldr = atom({ plugin: 'robo-bar', key: 'tldr' } as const, null as string | null)
+// /robo-bar-ruler: rows of text of known lengths in place of the summary, to measure what fits on a surface.
+const ruler = atom({ plugin: 'robo-bar', key: 'ruler' } as const, false)
+
+const RULER_PROSE =
+  'Fixed the band so the summary fits beside the countdown chip, measured the real width with a ruler test, ' +
+  'capped the text near the badge and kept the robot visible on every surface we support today without overlap'
+const RULER_LENGTHS = [40, 50, 60, 70, 80, 90, 100, 110, 120]
+// Exactly `n` characters of summary-like prose, starting with `n` and ending in "|".
+const rulerRow = (n: number) => `${n} ${RULER_PROSE}`.slice(0, n - 1) + '|'
 
 const rowKey = (id: string) => `s:${id}`
 const shortTime = (ms: number) => {
@@ -133,6 +142,10 @@ export const register: Register = on => {
       description: 'Keep this session\'s prompt cache warm with a hidden ping before it expires',
       argumentHint: 'on | off',
     })
+    await $.command.register({
+      name: 'robo-bar-ruler',
+      description: 'Toggle a ruler in the robo-bar that measures how much text fits on this surface',
+    })
     // Drop rows of sessions idle for over a day.
     const now = await $.clock.now()
     for (const key of await $.store.keys()) {
@@ -158,6 +171,16 @@ export const register: Register = on => {
       text: keepWarm
         ? `Keep-warm on for this session: up to ${MAX_PINGS} hidden pings in a row, 2 minutes before the cache expires.`
         : 'Keep-warm off for this session.',
+    }
+  })
+
+  on('command.run', { command: 'robo-bar-ruler' }, async $ => {
+    const isOn = !(await read($, ruler))
+    await update($, ruler, () => isOn)
+    return {
+      text: isOn
+        ? 'Ruler on: each row is as long as its first number. The longest row whose "|" still shows is what fits.'
+        : 'Ruler off.',
     }
   })
 
@@ -197,7 +220,8 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     await read($, tick)
     const row = await readRow($)
-    if (e.props.hasSurvey || row.at === 0 || row.isBusy) return next(e)
+    const isRuler = await read($, ruler)
+    if (e.props.hasSurvey || (!isRuler && (row.at === 0 || row.isBusy))) return next(e)
 
     const ui = $.ui.resolve(e)
     const { Box, Text } = ui
@@ -235,14 +259,39 @@ export const register: Register = on => {
     }
 
     const alt = mode === 'hot' ? 'Robo, bobbing' : 'Robo, frozen'
+    const badge = (
+      <Box key="badge" flexShrink={0} alignItems="center">
+        <Svg key="robo" source={roboSvg(mode)} alt={alt} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />
+        <Text> </Text>
+        <Svg key="chip" source={chip.source} alt={word} width={chip.w} height={chip.h} />
+      </Box>
+    )
+
+    if (isRuler) {
+      const head =
+        `ruler · ${e.surface} · bodyColumns ${e.props.bodyColumns ?? '?'} · viewport ${e.viewport?.columns ?? '?'}` +
+        ` · room ${room}`
+      return (
+        <Box flexDirection="column">
+          <Text key="head">{head}</Text>
+          {RULER_LENGTHS.map(n => (
+            <Box key={`r${n}`} flexDirection="row" alignItems="center">
+              <Box key="t" flexGrow={1} flexShrink={1} marginRight={2}>
+                <Text dimColor wrap="truncate-end">
+                  {rulerRow(n)}
+                </Text>
+              </Box>
+              {badge}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="row" alignItems="center">
         {tldrText}
-        <Box key="badge" flexShrink={0} alignItems="center">
-          <Svg key="robo" source={roboSvg(mode)} alt={alt} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />
-          <Text> </Text>
-          <Svg key="chip" source={chip.source} alt={word} width={chip.w} height={chip.h} />
-        </Box>
+        {badge}
       </Box>
     )
   })
